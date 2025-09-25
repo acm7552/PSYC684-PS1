@@ -12,7 +12,7 @@ outputfile$ = "C:/Users/acm75/OneDrive/Desktop/PSYC684_PS1/Q5/dialectsdataoutput
 deleteFile: outputfile$ 
 
 # print a line to your output file containing the names of the features
-appendFileLine: outputfile$, "minint,maxint,rangeint,meanint,pitch,maxf1,meanf1,maxf2,meanf2,dx"
+appendFileLine: outputfile$, "minint,maxint,rangeint,meanint,jitter,shimmer,pitch,maxf1,meanf1,maxf2,meanf2,meanHarmonicity,dx"
 
 # loop through the files one by one
 ctr = 0
@@ -34,7 +34,7 @@ for ifile to numberOfFiles
     appendInfoLine: fileIntro$ + "read!"
 
     # make sure you've selected the sound
-    selectObject: "Sound " + fileIntro$
+    sound = selectObject: "Sound " + fileIntro$
 
     # get min, max and mean intensity (a.k.a. energy) of that sound
     # also get intensity range
@@ -50,10 +50,10 @@ for ifile to numberOfFiles
     appendFile: outputfile$, minintensity, ",", maxintensity, ",", rangeintensity, ",", meanintensity, ","
 
     # make sure you select the sound again
-    selectObject: "Sound " + fileIntro$
+    sound = selectObject: "Sound " + fileIntro$
 
     # convert to pitch
-    To Pitch: 0, 75, 500
+    pitch = To Pitch: 0, 75, 500
     appendInfoLine: fileIntro$ + " pitch!"
     # select it
     #select Pitch: "Pitch " + fileIntro$
@@ -64,11 +64,26 @@ for ifile to numberOfFiles
 
     # convert to pointProcess for shimmer
     To PointProcess
-    pp = selected ("PointProcess")
+    # pp = selected ("PointProcess")
+    
+    # get the selected Sound object
+    sound = selectObject: "Sound " + fileIntro$
+
+    # select all three objects for voice report
+    selectObject: "Sound " + fileIntro$, "Pitch " + fileIntro$, "PointProcess " + fileIntro$
+
+    # generate voice report
+    voiceReport$ = Voice report: 0, 0, 75, 600, 1.3, 1.6, 0.03, 0.45
+
+    # Extract shimmer and jitter
+    jitter = extractNumber (voiceReport$, "Jitter (local):")
+    shimmer = extractNumber (voiceReport$, "Shimmer (local):")
+
+    # print the results to file
+    appendFile: outputfile$, jitter, ",", shimmer, ","
 
     # print to file
     appendFile: outputfile$, meanF0, ","
- 
 
     # make sure you select the sound again
     selectObject: "Sound " + fileIntro$
@@ -85,6 +100,18 @@ for ifile to numberOfFiles
          meanf = Get mean: formnum, 0, 0, "Hertz"
 	 		 appendFile: outputfile$, maxf, ",", meanf, ","
     endfor
+
+    # select that sound AGAIN.
+    selectObject: "Sound " + fileIntro$
+
+    # time to extract even more features like harmonicity
+    To Harmonicity (cc)... 75 600 0.01
+    
+    # this gets harmonicity over entire sound.
+    meanHarmon = Get mean: 0, 0, "dB"
+    
+    # append it to file
+    appendFile: outputfile$, meanHarmon, ","
 
   
     appendInfoLine: "data complete!"
@@ -110,6 +137,8 @@ for ifile to numberOfFiles
 	 removeObject: "Formant " + fileIntro$
 	 removeObject: "Intensity " + fileIntro$
 	 removeObject: "Pitch " + fileIntro$
+	 removeObject: "PointProcess " + fileIntro$
+	 removeObject: "Harmonicity " + fileIntro$
 	 
 
 endfor

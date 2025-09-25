@@ -1,8 +1,10 @@
 import re
 import numpy as np
+from sklearn.svm import SVC
 from sklearn.naive_bayes import GaussianNB
 from sklearn.model_selection import cross_val_score
 from sklearn import metrics
+from sklearn.preprocessing import normalize
 import sys
 
 ########### READ IN THE DATA ##########
@@ -29,11 +31,18 @@ nptarget = np.array(target)
 npdata = np.array(data)
 
 
+## normalize the columns
+## npdata = normalize(data, norm='l2', axis=1)
+
+
 ########### CLASSIFICATION WITH CROSS VALIDATION  ############
 
 ## see how many features and training examples you have
 print("You have ", npdata.shape[0], "training instances")
 print("You have ", npdata.shape[1], "features")
+
+
+
 
 ## very, very basic classification with Naive Bayes classifier
 gnb = GaussianNB()
@@ -43,12 +52,15 @@ print("Baseline classification F1:", np.average(scores))
 ########### USING A SUBSET OF THE FEATURES #########
 ## Let's say you only want to use features 3 and 4...
 # npdatafeaturesubset = npdata[:,3:5]
-
-npdatafeaturesubset = npdata[:,[1,5,6,7,8]]
+subsetArray = [1,3,7,8,9,10]
+npdatafeaturesubset = npdata[:,subsetArray]
 
 ## see how many features and training examples you have
 print("You have ", npdatafeaturesubset.shape[0], "training instances")
 print("You have ", npdatafeaturesubset.shape[1], "features")
+featureLabels = np.array(labels)
+featureIndices = np.array(subsetArray)
+print(f"feature(s): {featureLabels[featureIndices]}")
 
 ## classify with just those features
 scores = cross_val_score(gnb, npdatafeaturesubset, nptarget, cv=5, scoring='f1')
@@ -75,6 +87,7 @@ traintarget = np.delete(nptarget, testid, 0)
 print(trainset.shape)
 
 # Build model
+# model = SVC(kernel="linear")
 model = GaussianNB()
 model.fit(trainset, traintarget)
 
