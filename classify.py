@@ -1,10 +1,11 @@
 import re
 import numpy as np
+from sklearn.neural_network import MLPClassifier
 from sklearn.svm import SVC
 from sklearn.naive_bayes import GaussianNB
 from sklearn.model_selection import cross_val_score
-from sklearn import metrics
-from sklearn.preprocessing import normalize
+from sklearn import metrics, tree
+from sklearn.preprocessing import normalize, StandardScaler
 import sys
 
 ########### READ IN THE DATA ##########
@@ -43,7 +44,6 @@ print("You have ", npdata.shape[1], "features")
 
 
 
-
 ## very, very basic classification with Naive Bayes classifier
 gnb = GaussianNB()
 scores = cross_val_score(gnb, npdata, nptarget, cv=5, scoring='f1')
@@ -52,7 +52,8 @@ print("Baseline classification F1:", np.average(scores))
 ########### USING A SUBSET OF THE FEATURES #########
 ## Let's say you only want to use features 3 and 4...
 # npdatafeaturesubset = npdata[:,3:5]
-subsetArray = [1,3,7,8,9,10]
+subsetArray = [1,3,4,5,6,7,8,9,10]
+# subsetArray = [1,3, 7]
 npdatafeaturesubset = npdata[:,subsetArray]
 
 ## see how many features and training examples you have
@@ -72,28 +73,50 @@ print("Baseline classification F1:", np.average(scores))
 # randomly select a subset of your data (size = 10)
 testid = [1, 1]
 while len(testid) != len(set(testid)):
-    testid = np.random.randint(0, npdata.shape[0], 10)
+    testid = np.random.randint(0, npdatafeaturesubset.shape[0], 10)
     print(testid)
 
 # Get your testing data
 print(testid)
-testset = npdata[testid, :]
+testset = npdatafeaturesubset[testid, :]
 testtarget = nptarget[testid]
 print(testset.shape)
 
 # Get your training data
-trainset = np.delete(npdata, testid, 0)
+trainset = np.delete(npdatafeaturesubset, testid, 0)
 traintarget = np.delete(nptarget, testid, 0)
 print(trainset.shape)
 
+
+# try scandard scaler for the data, since the nn is not liking unscaled data
+scaler = StandardScaler()
+trainset = scaler.fit_transform(trainset)
+testset = scaler.transform(testset)
+
+
 # Build model
 # model = SVC(kernel="linear")
-model = GaussianNB()
+#model = tree.DecisionTreeClassifier()
+#model = GaussianNB()
+model = MLPClassifier(hidden_layer_sizes=(12, 4), 
+                            activation='relu',                           
+                            learning_rate_init=1e-2,
+                            solver="adam",
+                            max_iter=400,
+                            random_state=42,
+                            verbose=True)
+
+
 model.fit(trainset, traintarget)
+
+
 
 # Apply model to test set
 expected = testtarget
 predicted = model.predict(testset)
+#print(predicted)
+#print(model.predict_proba(testset))
+#print(model.predict_proba(trainset))
 
 # Print some output
 print(metrics.classification_report(expected, predicted))

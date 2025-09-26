@@ -12,7 +12,7 @@ outputfile$ = "C:/Users/acm75/OneDrive/Desktop/PSYC684_PS1/Q5/dialectsdataoutput
 deleteFile: outputfile$ 
 
 # print a line to your output file containing the names of the features
-appendFileLine: outputfile$, "minint,maxint,rangeint,meanint,jitter,shimmer,pitch,maxf1,meanf1,maxf2,meanf2,meanHarmonicity,dx"
+appendFileLine: outputfile$, "minint,maxint,rangeint,meanint,jitter,shimmer,pitch,maxf1,meanf1,maxf2,meanf2,dx"
 
 # loop through the files one by one
 ctr = 0
@@ -105,13 +105,19 @@ for ifile to numberOfFiles
     selectObject: "Sound " + fileIntro$
 
     # time to extract even more features like harmonicity
-    To Harmonicity (cc)... 75 600 0.01
+    To Harmonicity (cc)... 75 600 0.01 4.5
     
     # this gets harmonicity over entire sound.
-    meanHarmon = Get mean: 0, 0, "dB"
+    meanHarmon = Get mean: 0, 0
     
     # append it to file
-    appendFile: outputfile$, meanHarmon, ","
+    ## uncomment it if you get it working
+    # appendFile: outputfile$, meanHarmon, ","
+
+    #
+    selectObject: "Sound " + fileIntro$
+    # get MFCC
+    # To MFCC: 12, 0.025, 0.01
 
   
     appendInfoLine: "data complete!"
