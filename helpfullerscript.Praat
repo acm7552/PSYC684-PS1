@@ -9,10 +9,13 @@ directory$ = "C:/Users/acm75/OneDrive/Desktop/PSYC684_PS1/Q5/Dialects/"
 # Give Praat the path to your output file
 # ASSIGN THIS VARIABLE TO THE FULL PATH TO YOUR OUTPUTFILE
 outputfile$ = "C:/Users/acm75/OneDrive/Desktop/PSYC684_PS1/Q5/dialectsdataoutput.csv"
-deleteFile: outputfile$ 
+deleteFile: outputfile$
+
+csvDirectory$ = "C:/Users/acm75/OneDrive/Desktop/PSYC684_PS1/Q5/MFCC/"
+
 
 # print a line to your output file containing the names of the features
-appendFileLine: outputfile$, "minint,maxint,rangeint,meanint,jitter,shimmer,pitch,maxf1,meanf1,maxf2,meanf2,dx"
+appendFileLine: outputfile$, "minint,maxint,rangeint,meanint,jitter,shimmer,pitch,maxf1,meanf1,maxf2,meanf2,mfcc,dx"
 
 # loop through the files one by one
 ctr = 0
@@ -45,6 +48,8 @@ for ifile to numberOfFiles
     maxintensity = Get maximum: 0, 0, "Parabolic"
     meanintensity = Get mean: 0, 0, "energy"
     rangeintensity = maxintensity - minintensity
+
+
 
     # print the info out to a file
     appendFile: outputfile$, minintensity, ",", maxintensity, ",", rangeintensity, ",", meanintensity, ","
@@ -114,10 +119,20 @@ for ifile to numberOfFiles
     ## uncomment it if you get it working
     # appendFile: outputfile$, meanHarmon, ","
 
-    #
+    # finally for MFCC. 
     selectObject: "Sound " + fileIntro$
-    # get MFCC
-    # To MFCC: 12, 0.025, 0.01
+    # get MFCC (i used sound to mfcc menu command to find these default parameters)
+    To MFCC: 12, 0.025, 0.01, 100.0, 100.0, 0.0
+
+    # have to convert it to matrix of values
+    To Matrix
+
+    # save to csv
+    Write to headerless spreadsheet file: csvDirectory$ + "/" + fileIntro$ + "MFCC.csv"
+
+    # need to save where the mfcc files are, so they can be loaded alongside
+    # just gonna use the name for this
+    appendFile: outputfile$, fileIntro$, ","
 
   
     appendInfoLine: "data complete!"
@@ -145,6 +160,8 @@ for ifile to numberOfFiles
 	 removeObject: "Pitch " + fileIntro$
 	 removeObject: "PointProcess " + fileIntro$
 	 removeObject: "Harmonicity " + fileIntro$
+	 removeObject: "MFCC " + fileIntro$
+	 removeObject: "Matrix " + fileIntro$
 	 
 
 endfor
