@@ -1,4 +1,5 @@
 #import re
+import random
 import numpy as np
 import pandas as pd
 from sklearn.neural_network import MLPClassifier
@@ -33,8 +34,12 @@ labels = data.columns
 
 print("The features are:", labels)
 
+## can also grab other engineered features here like ratio of f1 to f2
+
+#data["f1/f2"] = data["meanf1"] / data["meanf2"]
 ## CHANGE FEATURES FOR USING HERE
 chosenFeatures = ["pitch", "meanf1", "meanf2"]
+#chosenFeatures = []
 print("Chosen features: ", chosenFeatures)
 # for line in f:
 #     parts = line.split(",")
@@ -46,25 +51,25 @@ print("Chosen features: ", chosenFeatures)
 def getMFCC(row):
     filename = f"MFCC/{row}MFCC.csv"
     mfcc = pd.read_csv(filename, header=None, sep='\s+')
-    print(mfcc.shape)
+    #print(mfcc.shape)
 
     mfcc_np = mfcc.to_numpy()
     coefficients, frames = mfcc_np.shape # 12 * 2200 or something, frames is not the same
 
     # old and new frameIndex 
     oldIndex = np.arange(frames)
-    newIndex = np.linspace(0, frames - 1, 100) 
+    newIndex = np.linspace(0, frames - 1, 25) 
 
     # rows = coefficients, columns = frames
-    mfcc_resized = np.zeros((coefficients, 100))
+    mfcc_resized = np.zeros((coefficients, 25))
     for c in range(coefficients):
         f = interp1d(oldIndex, mfcc_np[c, :], kind='linear')
         mfcc_resized[c, :] = f(newIndex)
 
-    # should be 12 by 100
-    print(mfcc_resized.shape) 
+    # should be 12 by 25
+    #print(mfcc_resized.shape) 
     mfcc_resized_flattened = mfcc_resized.flatten()
-    print(mfcc_resized_flattened.shape)
+    #print(mfcc_resized_flattened.shape)
     return mfcc_resized_flattened
 
 
@@ -79,10 +84,10 @@ if usingMFCC:
     data["mfcc"] = data["mfcc"].apply(getMFCC)
     #print(data)
     npMFCC = np.stack(data["mfcc"].to_numpy())
-    print(npMFCC.shape)
+    #print(npMFCC.shape)
     #npdata = np.concatenate(npdata, np.array(data["mfcc"]))
     npdata = np.hstack([npdata, npMFCC])
-    print(npdata.shape)
+    #print(npdata.shape)
 
 
 ## normalize the columns
@@ -94,8 +99,6 @@ if usingMFCC:
 ## see how many features and training examples you have
 print("You have ", npdata.shape[0], "training instances")
 print("You have ", npdata.shape[1], "features")
-
-
 
 
        
@@ -124,11 +127,17 @@ print("You have ", npdata.shape[1], "features")
 
 ########### CLASSIFICATION ON A HELD-OUT SET  ############
 
+
+# seed = random.randint(1, 10000)
+seed = 42
+print("seed: ", seed)
+# try scandard scaler for the data, since the nn is not liking unscaled data
+#scaler = StandardScaler()
+#X = scaler.fit_transform(npdata)
 X = npdata
 y = nptarget
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.25, random_state=42, shuffle=True
-)
+    X, y, test_size=0.25, random_state=seed, shuffle=True)
 
 print("Training samples:", X_train.shape[0])
 print("Test samples:", X_test.shape[0])
@@ -139,13 +148,13 @@ print("Test samples:", X_test.shape[0])
 #     testid = np.random.randint(0, npdatafeaturesubset.shape[0], 10)
 #     print(testid)
 
-# # Get your testing data
+# get testing data
 # print(testid)
 # testset = npdatafeaturesubset[testid, :]
 # testtarget = nptarget[testid]
 # print(testset.shape)
 
-# # Get your training data
+# get training data
 # trainset = np.delete(npdatafeaturesubset, testid, 0)
 # traintarget = np.delete(nptarget, testid, 0)
 # print(trainset.shape)
@@ -161,12 +170,12 @@ X_test = scaler.transform(X_test)
 # model = SVC(kernel="linear")
 #model = tree.DecisionTreeClassifier()
 #model = GaussianNB()
-model = MLPClassifier(hidden_layer_sizes=(1000, 400, 50, 10), 
+model = MLPClassifier(hidden_layer_sizes=(400, 100, 48, 12), 
                             activation='relu',                           
                             learning_rate_init=1e-2,
                             solver="adam",
-                            max_iter=400,
-                            random_state=42,
+                            max_iter=50,
+                            random_state=seed,
                             verbose=True)
 
 
