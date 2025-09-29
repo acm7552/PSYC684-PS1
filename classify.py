@@ -1,195 +1,215 @@
-#import re
-import random
+#!/usr/bin/env python3
+"""
+classify_shubh.py
+A cleaner, configurable classifier script with:
+ - 5-fold CV (weighted F1)
+ - Feature ablation (MFCC only / scalars only / both)
+ - Optional hyperparameter search (GridSearchCV)
+ - Held-out split report + confusion matrix
+
+Usage examples:
+  python classify_shubh.py
+  python classify_shubh.py --no-grid --cv-only
+  python classify_shubh.py --features pitch meanf1 meanf2 --seed 7
+  python classify_shubh.py --save-cm cm.png
+"""
+
+import argparse
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from sklearn.neural_network import MLPClassifier
-from sklearn.svm import SVC
-from sklearn.naive_bayes import GaussianNB
-from sklearn.model_selection import cross_val_score, train_test_split
-from sklearn import metrics, tree
-from sklearn.preprocessing import normalize, StandardScaler
 from scipy.interpolate import interp1d
-#import sys
 
-########### READ IN THE DATA ##########
+from sklearn.model_selection import (
+    StratifiedKFold, train_test_split, cross_val_score, GridSearchCV
+)
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import (
+    classification_report, confusion_matrix, ConfusionMatrixDisplay,
+    f1_score, accuracy_score
+)
+from sklearn.neural_network import MLPClassifier
 
-#labels = []
-#f = open(sys.argv[1])
-
-# read in the first line as the feature labels
-# so you can know what you're removing or adding
-#labels = f.readline().rstrip().split(",")
-
-## read features into list of lists (data)
-## read diagnosis into a list of lists (target)
-target = []
-data = []
-
-df = pd.read_csv("dialectsdataoutput.csv")
-
-data = df.iloc[:, :-1]
-target = df.iloc[:, -1]
-
-labels = data.columns
-
-print("The features are:", labels)
-
-## can also grab other engineered features here like ratio of f1 to f2
-
-#data["f1/f2"] = data["meanf1"] / data["meanf2"]
-## CHANGE FEATURES FOR USING HERE
-chosenFeatures = ["pitch", "meanf1", "meanf2"]
-#chosenFeatures = []
-print("Chosen features: ", chosenFeatures)
-# for line in f:
-#     parts = line.split(",")
-#     data.append([float(p) for p in parts[0:-1]])
-#     target.append(float(parts[-1]))
+import matplotlib.pyplot as plt
 
 
-# use this w/ np.apply to get the mfcc coefficients and then resize them
-def getMFCC(row):
-    filename = f"MFCC/{row}MFCC.csv"
-    mfcc = pd.read_csv(filename, header=None, sep='\s+')
-    #print(mfcc.shape)
-
+# --------------------------
+# MFCC loader (12 x N -> 12 x target_frames -> flatten)
+# --------------------------
+def load_and_interpolate_mfcc(mfcc_path: Path, target_frames: int = 25) -> np.ndarray:
+    mfcc = pd.read_csv(mfcc_path, header=None, sep=r"\s+")
     mfcc_np = mfcc.to_numpy()
-    coefficients, frames = mfcc_np.shape # 12 * 2200 or something, frames is not the same
-
-    # old and new frameIndex 
-    oldIndex = np.arange(frames)
-    newIndex = np.linspace(0, frames - 1, 25) 
-
-    # rows = coefficients, columns = frames
-    mfcc_resized = np.zeros((coefficients, 25))
-    for c in range(coefficients):
-        f = interp1d(oldIndex, mfcc_np[c, :], kind='linear')
-        mfcc_resized[c, :] = f(newIndex)
-
-    # should be 12 by 25
-    #print(mfcc_resized.shape) 
-    mfcc_resized_flattened = mfcc_resized.flatten()
-    #print(mfcc_resized_flattened.shape)
-    return mfcc_resized_flattened
+    coeffs, frames = mfcc_np.shape
+    old_idx = np.arange(frames)
+    new_idx = np.linspace(0, frames - 1, target_frames)
+    out = np.zeros((coeffs, target_frames), dtype=float)
+    for c in range(coeffs):
+        f = interp1d(old_idx, mfcc_np[c, :], kind="linear", fill_value="extrapolate")
+        out[c, :] = f(new_idx)
+    return out.flatten()
 
 
+def build_dataset(csv_path: Path, mfcc_dir: Path, chosen_features, target_frames=25):
+    df = pd.read_csv(csv_path)
 
-## convert to numpy arrays
-nptarget = np.array(target)
-npdata = np.array(data[chosenFeatures])
+    # Scalar features
+    X_scalars = df[chosen_features].to_numpy(dtype=float)
+    y = df.iloc[:, -1].to_numpy()
 
+    # MFCC features: expect either 'mfcc' (stem) or 'file' (stem)
+    if "mfcc" in df.columns:
+        stems = df["mfcc"].astype(str)
+    elif "file" in df.columns:
+        stems = df["file"].astype(str)
+    else:
+        raise ValueError(
+            "CSV must contain a 'mfcc' or 'file' column with filename stems "
+            "used in MFCC/<stem>MFCC.csv"
+        )
 
-usingMFCC = True
-if usingMFCC:
-    data["mfcc"] = data["mfcc"].apply(getMFCC)
-    #print(data)
-    npMFCC = np.stack(data["mfcc"].to_numpy())
-    #print(npMFCC.shape)
-    #npdata = np.concatenate(npdata, np.array(data["mfcc"]))
-    npdata = np.hstack([npdata, npMFCC])
-    #print(npdata.shape)
+    mfcc_list = []
+    for stem in stems:
+        mfcc_path = mfcc_dir / f"{stem}MFCC.csv"
+        if not mfcc_path.exists():
+            raise FileNotFoundError(f"Missing MFCC file: {mfcc_path}")
+        mfcc_list.append(load_and_interpolate_mfcc(mfcc_path, target_frames=target_frames))
+    X_mfcc = np.vstack(mfcc_list)
 
-
-## normalize the columns
-## npdata = normalize(data, norm='l2', axis=1)
-
-
-########### CLASSIFICATION WITH CROSS VALIDATION  ############
-
-## see how many features and training examples you have
-print("You have ", npdata.shape[0], "training instances")
-print("You have ", npdata.shape[1], "features")
-
-
-       
-## very, very basic classification with Naive Bayes classifier
-#gnb = GaussianNB()
-#scores = cross_val_score(gnb, npdata, nptarget, cv=5, scoring='f1')
-#print("Baseline classification F1:", np.average(scores))
-
-########### USING A SUBSET OF THE FEATURES #########
-## Let's say you only want to use features 3 and 4...
-# npdatafeaturesubset = npdata[:,3:5]
-#subsetArray = [1,3,4,5,6,7,8,9,10]
-# subsetArray = [1,3, 7]
-#npdatafeaturesubset = npdata[:,subsetArray]
-
-## see how many features and training examples you have
-#print("You have ", npdatafeaturesubset.shape[0], "training instances")
-#print("You have ", npdatafeaturesubset.shape[1], "features")
-#featureIndices = np.array(subsetArray)
-#print(f"feature(s): {featureLabels[featureIndices]}")
-
-## classify with just those features
-#scores = cross_val_score(gnb, npdatafeaturesubset, nptarget, cv=5, scoring='f1')
-#print("Baseline classification F1:", np.average(scores))
+    return X_scalars, X_mfcc, y
 
 
-########### CLASSIFICATION ON A HELD-OUT SET  ############
+def cv_f1(pipe, X, y, cv):
+    scores = cross_val_score(pipe, X, y, cv=cv, scoring="f1_weighted", n_jobs=-1)
+    return scores.mean(), scores.std()
 
 
-# seed = random.randint(1, 10000)
-seed = 42
-print("seed: ", seed)
-# try scandard scaler for the data, since the nn is not liking unscaled data
-#scaler = StandardScaler()
-#X = scaler.fit_transform(npdata)
-X = npdata
-y = nptarget
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.25, random_state=seed, shuffle=True)
-
-print("Training samples:", X_train.shape[0])
-print("Test samples:", X_test.shape[0])
-
-# randomly select a subset of your data (size = 10)
-# testid = [1, 1]
-# while len(testid) != len(set(testid)):
-#     testid = np.random.randint(0, npdatafeaturesubset.shape[0], 10)
-#     print(testid)
-
-# get testing data
-# print(testid)
-# testset = npdatafeaturesubset[testid, :]
-# testtarget = nptarget[testid]
-# print(testset.shape)
-
-# get training data
-# trainset = np.delete(npdatafeaturesubset, testid, 0)
-# traintarget = np.delete(nptarget, testid, 0)
-# print(trainset.shape)
+def plot_and_save_cm(y_true, y_pred, out_png=None, title="Held-out Confusion Matrix"):
+    print("\nConfusion matrix:")
+    cm = confusion_matrix(y_true, y_pred)
+    print(cm)
+    try:
+        disp = ConfusionMatrixDisplay(cm)
+        disp.plot(cmap="Blues")
+        plt.title(title)
+        plt.tight_layout()
+        if out_png:
+            plt.savefig(out_png, dpi=200)
+            print(f"Saved confusion matrix to {out_png}")
+        else:
+            plt.show()
+    except Exception as e:
+        print(f"(Skipping CM plot — {e})")
 
 
-# try scandard scaler for the data, since the nn is not liking unscaled data
-scaler = StandardScaler()
-X_train = scaler.fit_transform(X_train)
-X_test = scaler.transform(X_test)
+def heldout_report(X, y, name, base_pipe, seed):
+    """Run a consistent held-out split for a given feature set and report metrics."""
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.25, random_state=seed, stratify=y
+    )
+    model = base_pipe.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+
+    print(f"\n=== Held-out ({name}) ===")
+    print(classification_report(y_test, y_pred, digits=2))
+    print("Confusion matrix:\n", confusion_matrix(y_test, y_pred))
+
+    return (
+        f1_score(y_test, y_pred, average="weighted"),
+        accuracy_score(y_test, y_pred)
+    )
 
 
-# Build model
-# model = SVC(kernel="linear")
-#model = tree.DecisionTreeClassifier()
-#model = GaussianNB()
-model = MLPClassifier(hidden_layer_sizes=(400, 100, 48, 12), 
-                            activation='relu',                           
-                            learning_rate_init=1e-2,
-                            solver="adam",
-                            max_iter=50,
-                            random_state=seed,
-                            verbose=True)
+def main():
+    parser = argparse.ArgumentParser(description="Binary speech variety classification (Shubh version)")
+    parser.add_argument("--csv", type=Path, default=Path("dialectsdataoutput.csv"),
+                        help="Path to feature CSV (default: dialectsdataoutput.csv)")
+    parser.add_argument("--mfcc-dir", type=Path, default=Path("MFCC"),
+                        help="Directory containing per-file MFCC CSVs (default: MFCC/)")
+    parser.add_argument("--features", nargs="+", default=["pitch", "meanf1", "meanf2"],
+                        help="Scalar feature names from the CSV to include")
+    parser.add_argument("--frames", type=int, default=25, help="Target MFCC frames (default: 25)")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--no-grid", action="store_true", help="Skip GridSearchCV")
+    parser.add_argument("--cv-only", action="store_true", help="Run only CV (no held-out split)")
+    parser.add_argument("--save-cm", type=Path, default=None, help="Save confusion matrix PNG to this path")
+    args = parser.parse_args()
+
+    print(f"CSV: {args.csv}")
+    print(f"MFCC dir: {args.mfcc_dir}")
+    print(f"Chosen scalar features: {args.features}")
+    print(f"Target MFCC frames: {args.frames}")
+    print(f"Seed: {args.seed}")
+
+    X_scalars, X_mfcc, y = build_dataset(args.csv, args.mfcc_dir, args.features, target_frames=args.frames)
+    X_both = np.hstack([X_scalars, X_mfcc])
+
+    print(f"\nShapes → scalars: {X_scalars.shape}, mfcc: {X_mfcc.shape}, both: {X_both.shape}")
+    print(f"Class balance: {np.bincount(y.astype(int))}")
+
+    # Common pipeline (scaling inside CV and held-out)
+    base_pipe = Pipeline([
+        ("scaler", StandardScaler()),
+        ("mlp", MLPClassifier(
+            hidden_layer_sizes=(400, 100, 48, 12),
+            activation="relu",
+            learning_rate_init=1e-2,
+            solver="adam",
+            early_stopping=True,
+            n_iter_no_change=5,
+            max_iter=200,
+            random_state=args.seed,
+            verbose=False
+        ))
+    ])
+
+    # --- Held-out reports for all three feature sets (same split) ---
+    f1_mfcc, acc_mfcc   = heldout_report(X_mfcc,   y, "MFCC only",        base_pipe, args.seed)
+    f1_scal, acc_scal   = heldout_report(X_scalars, y, "Scalars only",     base_pipe, args.seed)
+    f1_both, acc_both   = heldout_report(X_both,    y, "MFCC + Scalars",   base_pipe, args.seed)
+
+    print("\nSummary (held-out):")
+    print(f"MFCC only        -> F1={f1_mfcc:.2f},  Acc={acc_mfcc:.2f}")
+    print(f"Scalars only     -> F1={f1_scal:.2f},  Acc={acc_scal:.2f}")
+    print(f"MFCC + Scalars   -> F1={f1_both:.2f},  Acc={acc_both:.2f}")
+
+    # --- 5-FOLD CV (weighted F1) ---
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=args.seed)
+    print("\n=== 5-fold CV (weighted F1) ===")
+    for name, X in [("MFCC only", X_mfcc), ("Scalars only", X_scalars), ("MFCC + Scalars", X_both)]:
+        m, s = cv_f1(base_pipe, X, y, cv)
+        print(f"{name:16s}: {m:.3f} ± {s:.3f}")
+
+    # --- Optional GridSearchCV on combined features ---
+    if not args.no_grid:
+        print("\n=== GridSearchCV on MFCC + Scalars (weighted F1) ===")
+        grid = {
+            "mlp__hidden_layer_sizes": [(256, 64, 16), (400, 100, 48, 12)],
+            "mlp__alpha": [1e-5, 1e-4, 1e-3],
+            "mlp__learning_rate_init": [1e-3, 1e-2]
+        }
+        gs = GridSearchCV(base_pipe, grid, cv=cv, scoring="f1_weighted", n_jobs=-1)
+        gs.fit(X_both, y)
+        print(f"Best CV F1: {gs.best_score_:.3f}")
+        print(f"Best params: {gs.best_params_}")
+
+    if args.cv_only:
+        return
+
+    # --- Final held-out split (reportable like Andrew's) ---
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_both, y, test_size=0.25, random_state=args.seed, stratify=y
+    )
+    print(f"\nHeld-out split → train: {X_train.shape[0]}, test: {X_test.shape[0]}")
+
+    pipe = base_pipe.fit(X_train, y_train)
+    y_pred = pipe.predict(X_test)
+
+    print("\n=== Held-out Classification Report ===")
+    print(classification_report(y_test, y_pred, digits=2))
+    plot_and_save_cm(y_test, y_pred, out_png=args.save_cm)
 
 
-model.fit(X_train, y_train)
-
-
-
-# Apply model to test set
-expected = y_test
-predicted = model.predict(X_test)
-#print(predicted)
-#print(model.predict_proba(testset))
-#print(model.predict_proba(trainset))
-
-# Print some output
-print(metrics.classification_report(expected, predicted))
-print(metrics.confusion_matrix(expected, predicted))
+if __name__ == "__main__":
+    main()
